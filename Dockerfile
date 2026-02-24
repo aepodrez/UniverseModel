@@ -1,5 +1,11 @@
-FROM public.ecr.aws/lambda/python:3.11
+FROM python:3.11-slim
 
-COPY universe.py lambda_handler.py ${LAMBDA_TASK_ROOT}/
+ENV PYTHONUNBUFFERED=1
 
-CMD ["lambda_handler.lambda_handler"]
+WORKDIR /app
+
+RUN pip install --no-cache-dir boto3
+
+COPY universe.py lambda_handler.py ecs_entrypoint.py ./
+
+CMD ["python", "-u", "ecs_entrypoint.py"]

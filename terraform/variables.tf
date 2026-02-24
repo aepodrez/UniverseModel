@@ -16,20 +16,20 @@ variable "region" {
   default     = "us-east-1"
 }
 
-variable "lambda_memory_size" {
-  description = "Memory size for Lambda function in MB"
+variable "task_cpu" {
+  description = "CPU units for the ECS task (1024 = 1 vCPU)"
   type        = number
   default     = 1024
 }
 
-variable "lambda_timeout" {
-  description = "Timeout for Lambda function in seconds (max 900)"
+variable "task_memory" {
+  description = "Memory for the ECS task in MB"
   type        = number
-  default     = 900
+  default     = 4096
 }
 
-variable "lambda_image_tag" {
-  description = "Docker image tag for Lambda function"
+variable "container_image_tag" {
+  description = "Docker image tag for the ECS task container"
   type        = string
   default     = "latest"
 }

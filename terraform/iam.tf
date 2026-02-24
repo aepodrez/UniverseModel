@@ -1,14 +1,14 @@
-# IAM role for universe Lambda function
-resource "aws_iam_role" "lambda" {
-  name               = "${var.project_name}-universe-lambda-role-${var.environment}"
+# ECS Task Execution Role (for ECS agent / pulling images)
+resource "aws_iam_role" "execution_role" {
+  name = "${var.project_name}-universe-execution-role-${var.environment}"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
       {
-        Action = "sts:AssumeRole"
         Effect = "Allow"
+        Action = "sts:AssumeRole"
         Principal = {
-          Service = "lambda.amazonaws.com"
+          Service = "ecs-tasks.amazonaws.com"
         }
       }
     ]
@@ -17,16 +17,61 @@ resource "aws_iam_role" "lambda" {
   tags = local.common_tags
 }
 
-# Attach AWS managed policy for basic Lambda execution (CloudWatch Logs)
-resource "aws_iam_role_policy_attachment" "lambda_basic_execution" {
-  role       = aws_iam_role.lambda.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+resource "aws_iam_role_policy_attachment" "execution_role_policy" {
+  role       = aws_iam_role.execution_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
-# Inline policy for S3 and ECR access
-resource "aws_iam_role_policy" "lambda_permissions" {
-  name  = "${var.project_name}-universe-lambda-permissions-${var.environment}"
-  role  = aws_iam_role.lambda.id
+resource "aws_iam_role_policy" "execution_role_ecr_cloudwatch" {
+  name = "ecr-cloudwatch-access"
+  role = aws_iam_role.execution_role.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "ecr:GetAuthorizationToken",
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:GetDownloadUrlForLayer",
+          "ecr:BatchGetImage"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+# ECS Task Role (for the running container)
+resource "aws_iam_role" "task_role" {
+  name = "${var.project_name}-universe-task-role-${var.environment}"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "ecs-tasks.amazonaws.com"
+        }
+      }
+    ]
+  })
+
+  tags = local.common_tags
+}
+
+resource "aws_iam_role_policy" "task_role_s3" {
+  name = "s3-access"
+  role = aws_iam_role.task_role.id
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -41,15 +86,6 @@ resource "aws_iam_role_policy" "lambda_permissions" {
           data.aws_ssm_parameter.s3_bucket_arn.value,
           "${data.aws_ssm_parameter.s3_bucket_arn.value}/*"
         ]
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "ecr:GetDownloadUrlForLayer",
-          "ecr:BatchGetImage",
-          "ecr:GetAuthorizationToken"
-        ]
-        Resource = "*"
       }
     ]
   })
