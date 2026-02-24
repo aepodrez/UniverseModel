@@ -1,10 +1,5 @@
-FROM python:3.11-slim
+FROM public.ecr.aws/lambda/python:3.11
 
-ENV PYTHONUNBUFFERED=1
-ENV PYTHONDONTWRITEBYTECODE=1
+COPY universe.py lambda_handler.py ${LAMBDA_TASK_ROOT}/
 
-WORKDIR /app
-
-COPY . .
-
-CMD ["python", "universe.py"]
+CMD ["lambda_handler.lambda_handler"]
