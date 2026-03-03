@@ -44,7 +44,7 @@ resource "aws_ecs_task_definition" "this" {
         options = {
           "awslogs-group"         = aws_cloudwatch_log_group.this.name
           "awslogs-region"        = var.region
-          "awslogs-stream-prefix" = "ecs"
+          "awslogs-stream-prefix" = "universe"
         }
       }
     }
