@@ -24,6 +24,7 @@ Usage
 import argparse
 import csv
 import json
+import re
 import sys
 import time
 import urllib.error
@@ -40,9 +41,16 @@ US_EXCHANGES = frozenset(
     {"Nasdaq", "NYSE", "NYSE Arca", "NYSE American", "Cboe BZX", "BATS"}
 )
 
-# SIC codes to drop — non-operating / pooled-investment vehicles.
-#   6726  Investment Offices, NEC  (ETFs, closed-end funds, SPACs, blank checks)
-EXCLUDE_SIC = frozenset({"6726"})
+# SIC codes to drop — non-operating / pooled-investment / blank-check vehicles.
+#   6726  Investment Offices, NEC
+#   6770  Blank Checks
+EXCLUDE_SIC = frozenset({"6726", "6770"})
+
+# Non-common suffixes used in listed ticker symbols.
+_NON_COMMON_HYPHEN_SUFFIXES = frozenset(
+    {"W", "WS", "WT", "R", "RT", "RI", "U", "UN", "UT", "P", "PR", "PFD"}
+)
+_NON_COMMON_HYPHEN_SUFFIX_RE = re.compile(r"^P[A-Z0-9]{1,3}$")
 
 # SEC allows ≤10 req/s. We fire batches of 8 with a 1 s pause between them.
 BATCH_SIZE = 8
@@ -136,10 +144,55 @@ def enrich_sic(tickers: list[dict]) -> None:
 
 
 def filter_common_stocks(tickers: list[dict]) -> list[dict]:
-    """Drop non-operating entities (ETFs, investment cos, blank checks)."""
+    """Drop non-operating entities and non-common ticker classes."""
+
+    ticker_set = {t["ticker"] for t in tickers}
+
+    def is_non_common_ticker_symbol(symbol: str) -> bool:
+        ticker = (symbol or "").upper().strip()
+        if not ticker:
+            return True
+
+        # Hyphenated forms frequently encode non-common classes:
+        # warrants (-WT/-W), rights (-R/-RI), units (-U/-UN), preferred (-PA/-PB).
+        if "-" in ticker:
+            suffix = ticker.rsplit("-", 1)[-1]
+            if suffix in _NON_COMMON_HYPHEN_SUFFIXES:
+                return True
+            if _NON_COMMON_HYPHEN_SUFFIX_RE.match(suffix):
+                return True
+
+        # 5-char Nasdaq convention for derivatives when base common exists.
+        # Examples: ABVEW, AACBR, AACBU.
+        if len(ticker) == 5 and ticker[-1] in {"W", "R", "U", "Z"}:
+            if ticker[:-1] in ticker_set:
+                return True
+
+        # 6-char derivative-style suffixes when base common exists.
+        if len(ticker) == 6 and ticker[-2:] in {"WS", "WT", "RW", "RT", "RU"}:
+            if ticker[:-2] in ticker_set:
+                return True
+
+        return False
+
     before = len(tickers)
-    out = [t for t in tickers if t.get("sic") and t["sic"] not in EXCLUDE_SIC]
-    print(f"  Excluded {before - len(out):,} non-operating / missing-SIC entries")
+    excluded_missing_or_sic = 0
+    excluded_non_common_symbol = 0
+    out: list[dict] = []
+
+    for t in tickers:
+        sic = t.get("sic")
+        if not sic or sic in EXCLUDE_SIC:
+            excluded_missing_or_sic += 1
+            continue
+        if is_non_common_ticker_symbol(t.get("ticker", "")):
+            excluded_non_common_symbol += 1
+            continue
+        out.append(t)
+
+    print(f"  Excluded {excluded_missing_or_sic:,} missing-SIC / excluded-SIC entries")
+    print(f"  Excluded {excluded_non_common_symbol:,} non-common ticker symbols")
+    print(f"  Total excluded: {before - len(out):,}")
     print(f"  {len(out):,} common stocks remaining")
     return out
 
@@ -174,4 +227,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
