@@ -13,6 +13,7 @@ env:
   AWS_REGION: ${{ secrets.AWS_REGION || vars.AWS_REGION || 'us-east-1' }}
   AWS_ROLE_TO_ASSUME: ${{ secrets.AWS_ROLE_TO_ASSUME }}
   AWS_ACCESS_KEY_ID_INPUT: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  DEPLOY_ENVIRONMENT: ${{ vars.DEPLOY_ENVIRONMENT || 'dev' }}
   ECR_REPOSITORY: euclidean/universe
 
 jobs:
@@ -49,3 +50,40 @@ jobs:
           docker build -t "$IMAGE_URI:${GITHUB_SHA}" -t "$IMAGE_URI:latest" .
           docker push "$IMAGE_URI:${GITHUB_SHA}"
           docker push "$IMAGE_URI:latest"
+
+      - name: Register ECS task definition revision
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          set -euo pipefail
+
+          IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY:${GITHUB_SHA}"
+          TASK_FAMILY="euclidean-universe-${DEPLOY_ENVIRONMENT}"
+          CONTAINER_NAME="universe"
+
+          TASK_DEF_JSON="$(aws ecs describe-task-definition --task-definition "$TASK_FAMILY" --query taskDefinition --output json)"
+
+          jq -e --arg name "$CONTAINER_NAME" '.containerDefinitions[] | select(.name == $name)' >/dev/null <<<"$TASK_DEF_JSON"
+
+          TMP_TASK_DEF="$(mktemp)"
+          jq \
+            --arg image "$IMAGE_URI" \
+            --arg name "$CONTAINER_NAME" \
+            '
+              del(
+                .taskDefinitionArn,
+                .revision,
+                .status,
+                .requiresAttributes,
+                .compatibilities,
+                .registeredAt,
+                .registeredBy,
+                .deregisteredAt
+              )
+              | .containerDefinitions = (
+                  .containerDefinitions
+                  | map(if .name == $name then .image = $image else . end)
+                )
+            ' <<<"$TASK_DEF_JSON" >"$TMP_TASK_DEF"
+
+          aws ecs register-task-definition --cli-input-json "file://$TMP_TASK_DEF"
