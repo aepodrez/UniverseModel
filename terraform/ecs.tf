@@ -36,6 +36,18 @@ resource "aws_ecs_task_definition" "this" {
         {
           name  = "ENVIRONMENT"
           value = var.environment
+        },
+        {
+          name  = "ALPACA_API_KEY"
+          value = var.alpaca_api_key
+        },
+        {
+          name  = "ALPACA_API_SECRET"
+          value = var.alpaca_api_secret
+        },
+        {
+          name  = "ALPACA_BASE_URL"
+          value = var.alpaca_base_url
         }
       ]
 

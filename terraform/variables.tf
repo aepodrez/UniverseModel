@@ -33,3 +33,21 @@ variable "container_image_tag" {
   type        = string
   default     = "latest"
 }
+
+variable "alpaca_api_key" {
+  description = "Alpaca API key for shortability enrichment"
+  type        = string
+  sensitive   = true
+}
+
+variable "alpaca_api_secret" {
+  description = "Alpaca API secret for shortability enrichment"
+  type        = string
+  sensitive   = true
+}
+
+variable "alpaca_base_url" {
+  description = "Alpaca base URL (live or paper API)"
+  type        = string
+  default     = "https://api.alpaca.markets"
+}
