@@ -219,7 +219,7 @@ def enrich_alpaca_shortability(tickers: list[dict]) -> None:
     """
     api_key = os.getenv("ALPACA_API_KEY", "")
     api_secret = os.getenv("ALPACA_API_SECRET", "")
-    base_url = os.getenv("ALPACA_BASE_URL", "https://api.alpaca.markets")
+    base_url = os.getenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets")
 
     if not api_key or not api_secret:
         print("  ALPACA_API_KEY / ALPACA_API_SECRET not set — marking all tickers shortable")

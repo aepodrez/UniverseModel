@@ -49,5 +49,5 @@ variable "alpaca_api_secret" {
 variable "alpaca_base_url" {
   description = "Alpaca base URL (live or paper API)"
   type        = string
-  default     = "https://api.alpaca.markets"
+  default     = "https://paper-api.alpaca.markets"
 }
