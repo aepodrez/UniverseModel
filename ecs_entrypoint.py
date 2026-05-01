@@ -65,6 +65,7 @@ def run() -> dict:
     tickers = universe.filter_by_exchange(tickers)
     universe.enrich_sic(tickers)
     tickers = universe.filter_common_stocks(tickers)
+    universe.enrich_alpaca_shortability(tickers)
 
     local_path = Path("/tmp/universe.csv")
     universe.save(tickers, str(local_path))
