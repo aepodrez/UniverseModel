@@ -24,7 +24,6 @@ Usage
 import argparse
 import csv
 import json
-import os
 import re
 import sys
 import time
@@ -198,69 +197,18 @@ def filter_common_stocks(tickers: list[dict]) -> list[dict]:
     return out
 
 
-def _fetch_alpaca_assets(api_key: str, api_secret: str, base_url: str) -> dict[str, bool]:
-    """Return {symbol: shortable} for all active Alpaca-tradable assets."""
-    url = f"{base_url.rstrip('/')}/v2/assets?status=active"
-    req = urllib.request.Request(url, headers={
-        "APCA-API-KEY-ID": api_key,
-        "APCA-API-SECRET-KEY": api_secret,
-    })
-    with urllib.request.urlopen(req, timeout=30) as resp:
-        assets = json.loads(resp.read().decode())
-    return {a["symbol"]: bool(a.get("shortable", False)) for a in assets}
-
-
-def enrich_alpaca_shortability(tickers: list[dict]) -> None:
-    """Add a shortable field to each ticker using Alpaca asset data.
-
-    Requires ALPACA_API_KEY and ALPACA_API_SECRET env vars.
-    Falls back to shortable=True for all tickers if credentials are absent
-    or the API call fails, so the pipeline is not blocked.
-    """
-    api_key = os.getenv("ALPACA_API_KEY", "")
-    api_secret = os.getenv("ALPACA_API_SECRET", "")
-    base_url = os.getenv("ALPACA_BASE_URL", "https://paper-api.alpaca.markets")
-
-    if not api_key or not api_secret:
-        print("  ALPACA_API_KEY / ALPACA_API_SECRET not set — marking all tickers shortable")
-        for t in tickers:
-            t["shortable"] = True
-        return
-
-    print(f"Fetching Alpaca asset shortability from {base_url} …")
-    try:
-        shortable_map = _fetch_alpaca_assets(api_key, api_secret, base_url)
-    except Exception as exc:
-        print(f"  Warning: Alpaca assets fetch failed ({exc}) — marking all tickers shortable")
-        for t in tickers:
-            t["shortable"] = True
-        return
-
-    shortable_count = 0
-    for t in tickers:
-        # CRSP uses '-' for dual-class shares (e.g. BRK-B); Alpaca uses '.' (BRK.B)
-        alpaca_sym = t["ticker"].replace("-", ".")
-        shortable = shortable_map.get(alpaca_sym, shortable_map.get(t["ticker"], False))
-        t["shortable"] = shortable
-        if shortable:
-            shortable_count += 1
-
-    not_shortable = len(tickers) - shortable_count
-    print(f"  {shortable_count:,} shortable, {not_shortable:,} not shortable on Alpaca")
-
 
 def save(tickers: list[dict], path: str) -> None:
-    """Write the final universe to CSV (ticker, cik, sic, shortable)."""
+    """Write the final universe to CSV (ticker, cik, sic)."""
     tickers.sort(key=lambda t: t["ticker"])
     with open(path, "w", newline="") as fh:
-        writer = csv.DictWriter(fh, fieldnames=["ticker", "cik", "sic", "shortable"])
+        writer = csv.DictWriter(fh, fieldnames=["ticker", "cik", "sic"])
         writer.writeheader()
         for t in tickers:
             writer.writerow({
                 "ticker": t["ticker"],
                 "cik": t["cik"],
                 "sic": t["sic"],
-                "shortable": t.get("shortable", True),
             })
     print(f"\nWrote {len(tickers):,} rows → {path}")
 
@@ -279,7 +227,6 @@ def main() -> None:
     tickers = filter_by_exchange(tickers)
     enrich_sic(tickers)
     tickers = filter_common_stocks(tickers)
-    enrich_alpaca_shortability(tickers)
     save(tickers, args.output)
 
 
