@@ -1,12 +1,12 @@
 resource "aws_cloudwatch_log_group" "this" {
-  name              = "/ecs/${var.project_name}-universe-${var.environment}"
+  name              = "/ecs/${var.project_name}-universe${local.env_suffix}"
   retention_in_days = 30
 
   tags = local.common_tags
 }
 
 resource "aws_ecs_task_definition" "this" {
-  family                   = "${var.project_name}-universe-${var.environment}"
+  family                   = "${var.project_name}-universe${local.env_suffix}"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
   cpu                      = var.task_cpu

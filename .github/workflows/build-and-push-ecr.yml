@@ -13,7 +13,7 @@ env:
   AWS_REGION: ${{ secrets.AWS_REGION || vars.AWS_REGION || 'us-east-1' }}
   AWS_ROLE_TO_ASSUME: ${{ secrets.AWS_ROLE_TO_ASSUME }}
   AWS_ACCESS_KEY_ID_INPUT: ${{ secrets.AWS_ACCESS_KEY_ID }}
-  DEPLOY_ENVIRONMENT: ${{ vars.DEPLOY_ENVIRONMENT || 'dev' }}
+  DEPLOY_ENVIRONMENT: ${{ vars.DEPLOY_ENVIRONMENT || '' }}
   ECR_REPOSITORY: euclidean/universe
 
 jobs:
@@ -58,7 +58,8 @@ jobs:
           set -euo pipefail
 
           IMAGE_URI="$ECR_REGISTRY/$ECR_REPOSITORY:${GITHUB_SHA}"
-          TASK_FAMILY="euclidean-universe-${DEPLOY_ENVIRONMENT}"
+          ENV_SUFFIX="${DEPLOY_ENVIRONMENT:+-${DEPLOY_ENVIRONMENT}}"
+          TASK_FAMILY="euclidean-universe${ENV_SUFFIX}"
           CONTAINER_NAME="universe"
 
           TASK_DEF_JSON="$(aws ecs describe-task-definition --task-definition "$TASK_FAMILY" --query taskDefinition --output json)"

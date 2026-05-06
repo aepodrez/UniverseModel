@@ -1,6 +1,6 @@
 # ECS Task Execution Role (for ECS agent / pulling images)
 resource "aws_iam_role" "execution_role" {
-  name = "${var.project_name}-universe-execution-role-${var.environment}"
+  name = "${var.project_name}-universe-execution-role${local.env_suffix}"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -52,7 +52,7 @@ resource "aws_iam_role_policy" "execution_role_ecr_cloudwatch" {
 
 # ECS Task Role (for the running container)
 resource "aws_iam_role" "task_role" {
-  name = "${var.project_name}-universe-task-role-${var.environment}"
+  name = "${var.project_name}-universe-task-role${local.env_suffix}"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
