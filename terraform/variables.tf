@@ -35,3 +35,9 @@ variable "container_image_tag" {
 }
 
 
+
+variable "edgar_identity" {
+  description = "EDGAR identity string for SEC requests"
+  type        = string
+  default     = ""
+}
