@@ -209,13 +209,14 @@ resource "aws_lambda_function" "universe_sic_worker" {
 }
 
 # ---------------------------------------------------------------------------
-# EventBridge — trigger universe_downloader daily at 06:00 UTC
+# EventBridge — trigger universe_downloader daily at 05:30 UTC
+# Runs before fama-french-daily (06:15) so universe.csv is ready for ticker filtering.
 # ---------------------------------------------------------------------------
 
 resource "aws_cloudwatch_event_rule" "universe_downloader_schedule" {
   name                = "${var.project_name}-universe-downloader-schedule${local.env_suffix}"
-  description         = "Daily trigger for universe_downloader at 06:00 UTC"
-  schedule_expression = "cron(0 6 * * ? *)"
+  description         = "Daily trigger for universe_downloader at 05:30 UTC"
+  schedule_expression = "cron(30 5 * * ? *)"
   tags                = local.common_tags
 }
 
