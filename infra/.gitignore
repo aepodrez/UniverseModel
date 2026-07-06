@@ -1,0 +1,7 @@
+cdk.out/
+.venv/
+__pycache__/
+*.pyc
+cdk.context.local.json
+# synth-time SSM lookup cache — re-read each run to stay loosely coupled
+cdk.context.json

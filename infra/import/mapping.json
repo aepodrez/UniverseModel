@@ -1,0 +1,23 @@
+{
+  "DownloaderLogGroupC45AB014": {
+    "LogGroupName": "/aws/lambda/euclidean-universe-downloader"
+  },
+  "SicWorkerLogGroup3994ABF0": {
+    "LogGroupName": "/aws/lambda/euclidean-universe-sic-worker"
+  },
+  "DownloaderRole9383957D": {
+    "RoleName": "euclidean-universe-downloader"
+  },
+  "SicWorkerRole4021B44C": {
+    "RoleName": "euclidean-universe-sic-worker"
+  },
+  "DownloaderFunction2A0E496C": {
+    "FunctionName": "euclidean-universe-downloader"
+  },
+  "SicWorkerFunctionC65F6F5F": {
+    "FunctionName": "euclidean-universe-sic-worker"
+  },
+  "DownloaderSchedule60BB4164": {
+    "Arn": "arn:aws:events:us-east-1:954976294836:rule/euclidean-universe-downloader-schedule"
+  }
+}
