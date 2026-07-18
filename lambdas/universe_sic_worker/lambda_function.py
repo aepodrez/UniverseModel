@@ -24,6 +24,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import boto3
 
+from sic_naics_crosswalk import sic4_to_naics6
+
 log = logging.getLogger()
 log.setLevel(logging.INFO)
 
@@ -146,10 +148,16 @@ def _load_result_0() -> dict[str, str]:
 def _write_universe_csv(tickers: list[dict]) -> bytes:
     tickers_sorted = sorted(tickers, key=lambda t: t["ticker"])
     buf = io.StringIO()
-    writer = csv.DictWriter(buf, fieldnames=["ticker", "cik", "sic"])
+    writer = csv.DictWriter(buf, fieldnames=["ticker", "cik", "sic", "naics", "naics_tier"])
     writer.writeheader()
     for t in tickers_sorted:
-        writer.writerow({"ticker": t["ticker"], "cik": t["cik"], "sic": t["sic"]})
+        writer.writerow({
+            "ticker": t["ticker"],
+            "cik": t["cik"],
+            "sic": t["sic"],
+            "naics": t["naics"] or "",
+            "naics_tier": t["naics_tier"],
+        })
     return buf.getvalue().encode("utf-8")
 
 
@@ -185,7 +193,16 @@ def _handle_chunk_1(manifest: dict) -> dict:
     for t in manifest["all_tickers"]:
         cik = t["cik"]
         sic = merged_sic.get(cik, "")
-        enriched.append({"ticker": t["ticker"], "cik": cik, "sic": sic})
+        naics_result = sic4_to_naics6(sic) if sic else None
+        naics = naics_result.naics6 if naics_result else None
+        naics_tier = naics_result.tier if naics_result else "unresolved"
+        enriched.append({
+            "ticker": t["ticker"],
+            "cik": cik,
+            "sic": sic,
+            "naics": naics,
+            "naics_tier": naics_tier,
+        })
 
     final = _filter_common_stocks(enriched)
 
