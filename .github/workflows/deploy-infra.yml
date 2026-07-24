@@ -55,5 +55,6 @@ jobs:
         env:
           CDK_DEFAULT_ACCOUNT: "954976294836"
           CDK_DEFAULT_REGION: ${{ env.AWS_REGION }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
           npx --yes aws-cdk@2 deploy --require-approval never

@@ -15,15 +15,20 @@ import os
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 
 import boto3
+from botocore.exceptions import ClientError
+from universe_reader import load_current_universe
 
 log = logging.getLogger()
 log.setLevel(logging.INFO)
 
 S3_BUCKET              = os.environ["S3_BUCKET"]
 UNIVERSE_KEY           = os.environ.get("UNIVERSE_KEY", "data-ingress/Static/universe.csv")
+UNIVERSE_PREFIX        = os.environ.get("UNIVERSE_PREFIX", "universe")
 MANIFEST_PREFIX        = os.environ.get("MANIFEST_PREFIX", "universe/work")
+SIC_UPDATES_PREFIX     = os.environ.get("SIC_UPDATES_PREFIX", "universe/pending_sic_updates")
 SIC_WORKER_FUNCTION    = os.environ["SIC_WORKER_FUNCTION_NAME"]
 EDGAR_IDENTITY         = os.environ.get("EDGAR_IDENTITY", "EuclideanResearch contact@example.com")
 
@@ -83,10 +88,21 @@ def _filter_by_exchange(tickers: list[dict]) -> list[dict]:
     return out
 
 
-def _load_existing_sic_cache() -> dict[str, str]:
+def _load_existing_sic_cache() -> tuple[dict[str, str], str | None, str | None]:
     try:
-        obj = s3.get_object(Bucket=S3_BUCKET, Key=UNIVERSE_KEY)
-        text = obj["Body"].read().decode("utf-8", errors="replace")
+        current = load_current_universe(s3, S3_BUCKET, UNIVERSE_PREFIX)
+        if current:
+            data = current["data"]
+            base_run_id = current["run_id"]
+            base_pointer_etag = current["pointer_etag"]
+            log.info("Loaded verified universe run %s", base_run_id)
+        else:
+            # One-time migration path before the first immutable run is published.
+            obj = s3.get_object(Bucket=S3_BUCKET, Key=UNIVERSE_KEY)
+            data = obj["Body"].read()
+            base_run_id = base_pointer_etag = None
+            log.info("Loaded legacy universe compatibility key")
+        text = data.decode("utf-8", errors="replace")
         reader = csv.DictReader(io.StringIO(text))
         cache: dict[str, str] = {}
         for row in reader:
@@ -95,19 +111,40 @@ def _load_existing_sic_cache() -> dict[str, str]:
             if cik and sic:
                 cache[cik] = sic
         log.info("Loaded existing SIC cache: %d entries", len(cache))
-        return cache
-    except s3.exceptions.NoSuchKey:
+        return cache, base_run_id, base_pointer_etag
+    except (s3.exceptions.NoSuchKey, ClientError) as exc:
+        if isinstance(exc, ClientError) and exc.response["Error"]["Code"] not in ("404", "NoSuchKey"):
+            raise
         log.info("No existing universe.csv found — cold start")
-        return {}
+        return {}, None, None
     except Exception as e:
-        log.warning("Failed to load existing universe.csv: %s", e)
-        return {}
+        log.error("Failed to load verified universe.csv: %s", e)
+        raise
+
+
+def _load_pending_sic_updates() -> tuple[dict[str, str], list[str]]:
+    updates: dict[str, str] = {}
+    keys: list[str] = []
+    paginator = s3.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=S3_BUCKET, Prefix=f"{SIC_UPDATES_PREFIX.rstrip('/')}/"):
+        for item in page.get("Contents", []):
+            key = item["Key"]
+            payload = json.loads(s3.get_object(Bucket=S3_BUCKET, Key=key)["Body"].read())
+            for cik, sic in payload.get("updates", {}).items():
+                updates[str(cik).zfill(10)] = str(sic).zfill(4)
+            keys.append(key)
+    log.info("Loaded %d pending SIC corrections from %d objects", len(updates), len(keys))
+    return updates, keys
 
 
 def lambda_handler(event, context):
+    event = event or {}
+    run_id = event.get("run_id") or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     all_tickers   = _fetch_all_tickers()
     filtered      = _filter_by_exchange(all_tickers)
-    existing_sic  = _load_existing_sic_cache()
+    existing_sic, base_run_id, base_pointer_etag = _load_existing_sic_cache()
+    pending_sic, pending_sic_keys = _load_pending_sic_updates()
+    existing_sic.update(pending_sic)
 
     ciks = [t["cik"] for t in filtered]
     mid  = len(ciks) // 2
@@ -120,8 +157,12 @@ def lambda_handler(event, context):
         "existing_sic": existing_sic,
         "chunk_0":      chunk_0,
         "chunk_1":      chunk_1,
+        "run_id":       run_id,
+        "base_run_id":  base_run_id,
+        "base_pointer_etag": base_pointer_etag,
+        "pending_sic_keys": pending_sic_keys,
     }
-    manifest_key = f"{MANIFEST_PREFIX}/manifest.json"
+    manifest_key = f"{MANIFEST_PREFIX}/runs/{run_id}/manifest.json"
     s3.put_object(
         Bucket=S3_BUCKET,
         Key=manifest_key,
@@ -133,7 +174,7 @@ def lambda_handler(event, context):
     lambda_.invoke(
         FunctionName=SIC_WORKER_FUNCTION,
         InvocationType="Event",
-        Payload=json.dumps({"chunk_index": 0}),
+        Payload=json.dumps({"chunk_index": 0, "run_id": run_id}),
     )
     log.info("Invoked %s with chunk_index=0", SIC_WORKER_FUNCTION)
 
@@ -143,4 +184,5 @@ def lambda_handler(event, context):
         "chunk_0_size":  len(chunk_0),
         "chunk_1_size":  len(chunk_1),
         "cache_size":    len(existing_sic),
+        "run_id":        run_id,
     }
