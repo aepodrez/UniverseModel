@@ -6,8 +6,8 @@ Invoked twice sequentially (by universe_downloader then by itself):
                  then self-invokes with chunk_index=1.
 
   chunk_index=1: enriches SIC for second half, merges both results, applies
-                 common-stock filtering, writes final universe.csv to S3,
-                 and cleans up work files.
+                 common-stock filtering, validates the dataset, and atomically
+                 promotes an immutable run before refreshing the legacy alias.
 """
 from __future__ import annotations
 
@@ -25,12 +25,14 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import boto3
 
 from sic_naics_crosswalk import sic4_to_naics6
+from universe_dataset import evaluate_universe, load_current_universe, publish_universe
 
 log = logging.getLogger()
 log.setLevel(logging.INFO)
 
 S3_BUCKET       = os.environ["S3_BUCKET"]
 UNIVERSE_KEY    = os.environ.get("UNIVERSE_KEY", "data-ingress/Static/universe.csv")
+UNIVERSE_PREFIX = os.environ.get("UNIVERSE_PREFIX", "universe")
 MANIFEST_PREFIX = os.environ.get("MANIFEST_PREFIX", "universe/work")
 EDGAR_IDENTITY  = os.environ.get("EDGAR_IDENTITY", "EuclideanResearch contact@example.com")
 SELF_FUNCTION   = os.environ["AWS_LAMBDA_FUNCTION_NAME"]
@@ -135,13 +137,17 @@ def _filter_common_stocks(tickers: list[dict]) -> list[dict]:
     return out
 
 
-def _load_manifest() -> dict:
-    obj = s3.get_object(Bucket=S3_BUCKET, Key=f"{MANIFEST_PREFIX}/manifest.json")
+def _work_key(run_id: str, name: str) -> str:
+    return f"{MANIFEST_PREFIX}/runs/{run_id}/{name}"
+
+
+def _load_manifest(run_id: str) -> dict:
+    obj = s3.get_object(Bucket=S3_BUCKET, Key=_work_key(run_id, "manifest.json"))
     return json.loads(obj["Body"].read())
 
 
-def _load_result_0() -> dict[str, str]:
-    obj = s3.get_object(Bucket=S3_BUCKET, Key=f"{MANIFEST_PREFIX}/result_0.json")
+def _load_result_0(run_id: str) -> dict[str, str]:
+    obj = s3.get_object(Bucket=S3_BUCKET, Key=_work_key(run_id, "result_0.json"))
     return json.loads(obj["Body"].read())
 
 
@@ -161,12 +167,12 @@ def _write_universe_csv(tickers: list[dict]) -> bytes:
     return buf.getvalue().encode("utf-8")
 
 
-def _handle_chunk_0(manifest: dict) -> dict:
+def _handle_chunk_0(manifest: dict, run_id: str) -> dict:
     sic_result = _enrich_sic_chunk(manifest["chunk_0"], manifest["existing_sic"])
 
     s3.put_object(
         Bucket=S3_BUCKET,
-        Key=f"{MANIFEST_PREFIX}/result_0.json",
+        Key=_work_key(run_id, "result_0.json"),
         Body=json.dumps(sic_result, separators=(",", ":")),
         ContentType="application/json",
     )
@@ -175,15 +181,15 @@ def _handle_chunk_0(manifest: dict) -> dict:
     lambda_.invoke(
         FunctionName=SELF_FUNCTION,
         InvocationType="Event",
-        Payload=json.dumps({"chunk_index": 1}),
+        Payload=json.dumps({"chunk_index": 1, "run_id": run_id}),
     )
     log.info("Self-invoked with chunk_index=1")
 
     return {"chunk_index": 0, "count": len(sic_result)}
 
 
-def _handle_chunk_1(manifest: dict) -> dict:
-    result_0   = _load_result_0()
+def _handle_chunk_1(manifest: dict, run_id: str) -> dict:
+    result_0   = _load_result_0(run_id)
     sic_result = _enrich_sic_chunk(manifest["chunk_1"], manifest["existing_sic"])
 
     merged_sic = {**result_0, **sic_result}
@@ -207,30 +213,46 @@ def _handle_chunk_1(manifest: dict) -> dict:
     final = _filter_common_stocks(enriched)
 
     csv_bytes = _write_universe_csv(final)
-    s3.put_object(
-        Bucket=S3_BUCKET,
-        Key=UNIVERSE_KEY,
-        Body=csv_bytes,
-        ContentType="text/csv",
+    current = load_current_universe(s3, S3_BUCKET, UNIVERSE_PREFIX)
+    current_run_id = current["run_id"] if current else None
+    if current_run_id != manifest.get("base_run_id"):
+        raise RuntimeError(
+            f"Universe base changed during run: started={manifest.get('base_run_id')} "
+            f"current={current_run_id}; refusing stale-base publication"
+        )
+    quality = evaluate_universe(
+        csv_bytes,
+        current["data"] if current else None,
+        current.get("quality") if current else None,
     )
-    log.info("Wrote universe.csv: %d rows → s3://%s/%s", len(final), S3_BUCKET, UNIVERSE_KEY)
-
-    for key in [f"{MANIFEST_PREFIX}/manifest.json", f"{MANIFEST_PREFIX}/result_0.json"]:
+    published = publish_universe(
+        s3, S3_BUCKET, UNIVERSE_PREFIX, UNIVERSE_KEY, run_id, csv_bytes, quality,
+        current.get("pointer_etag") if current else None,
+    )
+    log.info("Published immutable universe run %s: %d rows, quality=%s",
+             run_id, len(final), quality["status"])
+    for key in manifest.get("pending_sic_keys", []):
         try:
             s3.delete_object(Bucket=S3_BUCKET, Key=key)
-        except Exception as e:
-            log.warning("Failed to delete %s: %s", key, e)
-
-    return {"chunk_index": 1, "row_count": len(final)}
+        except Exception as exc:
+            log.warning("Published run but failed to remove applied SIC update %s: %s", key, exc)
+    return {"chunk_index": 1, "row_count": len(final), "run_id": run_id,
+            "manifest_status": published["status"], "quality_status": quality["status"]}
 
 
 def lambda_handler(event, context):
-    chunk_index = int((event or {}).get("chunk_index", 0))
-    log.info("universe_sic_worker starting: chunk_index=%d", chunk_index)
+    event = event or {}
+    chunk_index = int(event.get("chunk_index", 0))
+    run_id = str(event.get("run_id") or "").strip()
+    if not run_id:
+        raise ValueError("run_id is required")
+    log.info("universe_sic_worker starting: chunk_index=%d run_id=%s", chunk_index, run_id)
 
-    manifest = _load_manifest()
+    manifest = _load_manifest(run_id)
+    if manifest.get("run_id") != run_id:
+        raise RuntimeError("Work manifest run_id mismatch")
 
     if chunk_index == 0:
-        return _handle_chunk_0(manifest)
+        return _handle_chunk_0(manifest, run_id)
     else:
-        return _handle_chunk_1(manifest)
+        return _handle_chunk_1(manifest, run_id)

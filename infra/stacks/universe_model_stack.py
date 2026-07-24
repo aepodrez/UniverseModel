@@ -48,6 +48,9 @@ class UniverseModelStack(Stack):
         import_mode = self.node.try_get_context("import_mode")
         bucket_name = ssm.StringParameter.value_from_lookup(self, "/euclidean/s3_bucket_name")
         bucket_arn = ssm.StringParameter.value_from_lookup(self, "/euclidean/s3_bucket_arn")
+        openrouter_api_key = os.environ.get("OPENROUTER_API_KEY")
+        if not openrouter_api_key:
+            raise RuntimeError("OPENROUTER_API_KEY is required for universe data-quality review")
         sic_worker_arn = f"arn:aws:lambda:{self.region}:{self.account}:function:{SIC_WORKER_NAME}"
 
         # ---- log groups ----
@@ -82,13 +85,29 @@ class UniverseModelStack(Stack):
                             sid="S3ReadUniverse",
                             effect=iam.Effect.ALLOW,
                             actions=["s3:GetObject"],
-                            resources=[f"{bucket_arn}/universe/universe.csv"],
+                            resources=[f"{bucket_arn}/universe/universe.csv",
+                                       f"{bucket_arn}/universe/_runs/universe/*"],
                         ),
                         iam.PolicyStatement(
                             sid="S3WriteWork",
                             effect=iam.Effect.ALLOW,
                             actions=["s3:PutObject"],
                             resources=[f"{bucket_arn}/universe/work/*"],
+                        ),
+                        iam.PolicyStatement(
+                            sid="S3ListPendingSicUpdates",
+                            effect=iam.Effect.ALLOW,
+                            actions=["s3:ListBucket"],
+                            resources=[bucket_arn],
+                            conditions={"StringLike": {"s3:prefix": [
+                                "universe/pending_sic_updates/*"
+                            ]}},
+                        ),
+                        iam.PolicyStatement(
+                            sid="S3ReadPendingSicUpdates",
+                            effect=iam.Effect.ALLOW,
+                            actions=["s3:GetObject"],
+                            resources=[f"{bucket_arn}/universe/pending_sic_updates/*"],
                         ),
                         iam.PolicyStatement(
                             sid="InvokeSicWorker",
@@ -127,8 +146,15 @@ class UniverseModelStack(Stack):
                         iam.PolicyStatement(
                             sid="S3WriteUniverse",
                             effect=iam.Effect.ALLOW,
-                            actions=["s3:PutObject"],
-                            resources=[f"{bucket_arn}/universe/universe.csv"],
+                            actions=["s3:GetObject", "s3:PutObject"],
+                            resources=[f"{bucket_arn}/universe/universe.csv",
+                                       f"{bucket_arn}/universe/_runs/universe/*"],
+                        ),
+                        iam.PolicyStatement(
+                            sid="S3DeleteAppliedSicUpdates",
+                            effect=iam.Effect.ALLOW,
+                            actions=["s3:DeleteObject"],
+                            resources=[f"{bucket_arn}/universe/pending_sic_updates/*"],
                         ),
                         iam.PolicyStatement(
                             sid="SelfInvoke",
@@ -162,7 +188,9 @@ class UniverseModelStack(Stack):
             environment={
                 "S3_BUCKET": bucket_name,
                 "UNIVERSE_KEY": "universe/universe.csv",
+                "UNIVERSE_PREFIX": "universe",
                 "MANIFEST_PREFIX": "universe/work",
+                "SIC_UPDATES_PREFIX": "universe/pending_sic_updates",
                 "EDGAR_IDENTITY": EDGAR_IDENTITY,
                 "SIC_WORKER_FUNCTION_NAME": SIC_WORKER_NAME,
             },
@@ -181,8 +209,12 @@ class UniverseModelStack(Stack):
             environment={
                 "S3_BUCKET": bucket_name,
                 "UNIVERSE_KEY": "universe/universe.csv",
+                "UNIVERSE_PREFIX": "universe",
                 "MANIFEST_PREFIX": "universe/work",
+                "SIC_UPDATES_PREFIX": "universe/pending_sic_updates",
                 "EDGAR_IDENTITY": EDGAR_IDENTITY,
+                "DQ_AI_MODE": "advisory",
+                "OPENROUTER_API_KEY": openrouter_api_key,
             },
         )
 
