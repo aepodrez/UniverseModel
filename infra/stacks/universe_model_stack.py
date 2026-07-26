@@ -186,14 +186,14 @@ class UniverseModelStack(Stack):
             },
         )
 
-        # ---- daily schedule; runs before fama-french-daily (06:15) so
+        # ---- market-day schedule; runs before fama-french-daily (06:15) so
         # universe.csv is ready for ticker filtering ----
         rule = events.Rule(
             self,
             "DownloaderSchedule",
             rule_name=SCHEDULE_RULE_NAME,
-            description="Daily trigger for universe_downloader at 05:30 UTC",
-            schedule=events.Schedule.expression("cron(30 5 * * ? *)"),
+            description="Tue-Sat trigger for universe_downloader at 05:30 UTC",
+            schedule=events.Schedule.expression("cron(30 5 ? * TUE-SAT *)"),
         )
 
         if not import_mode:
