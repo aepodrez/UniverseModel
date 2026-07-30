@@ -49,8 +49,6 @@ class UniverseModelStack(Stack):
         bucket_name = ssm.StringParameter.value_from_lookup(self, "/euclidean/s3_bucket_name")
         bucket_arn = ssm.StringParameter.value_from_lookup(self, "/euclidean/s3_bucket_arn")
         openrouter_api_key = os.environ.get("OPENROUTER_API_KEY")
-        if not openrouter_api_key:
-            raise RuntimeError("OPENROUTER_API_KEY is required for universe data-quality review")
         sic_worker_arn = f"arn:aws:lambda:{self.region}:{self.account}:function:{SIC_WORKER_NAME}"
 
         # ---- log groups ----
@@ -214,7 +212,8 @@ class UniverseModelStack(Stack):
                 "SIC_UPDATES_PREFIX": "universe/pending_sic_updates",
                 "EDGAR_IDENTITY": EDGAR_IDENTITY,
                 "DQ_AI_MODE": "advisory",
-                "OPENROUTER_API_KEY": openrouter_api_key,
+                **({"OPENROUTER_API_KEY": openrouter_api_key}
+                   if openrouter_api_key else {}),
             },
         )
 
