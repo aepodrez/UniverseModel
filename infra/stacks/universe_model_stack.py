@@ -87,6 +87,15 @@ class UniverseModelStack(Stack):
                                        f"{bucket_arn}/universe/_runs/universe/*"],
                         ),
                         iam.PolicyStatement(
+                            sid="S3ListUniversePointer",
+                            effect=iam.Effect.ALLOW,
+                            actions=["s3:ListBucket"],
+                            resources=[bucket_arn],
+                            conditions={"StringLike": {"s3:prefix": [
+                                "universe/_runs/universe/*"
+                            ]}},
+                        ),
+                        iam.PolicyStatement(
                             sid="S3WriteWork",
                             effect=iam.Effect.ALLOW,
                             actions=["s3:PutObject"],
@@ -147,6 +156,15 @@ class UniverseModelStack(Stack):
                             actions=["s3:GetObject", "s3:PutObject"],
                             resources=[f"{bucket_arn}/universe/universe.csv",
                                        f"{bucket_arn}/universe/_runs/universe/*"],
+                        ),
+                        iam.PolicyStatement(
+                            sid="S3ListUniversePointer",
+                            effect=iam.Effect.ALLOW,
+                            actions=["s3:ListBucket"],
+                            resources=[bucket_arn],
+                            conditions={"StringLike": {"s3:prefix": [
+                                "universe/_runs/universe/*"
+                            ]}},
                         ),
                         iam.PolicyStatement(
                             sid="S3DeleteAppliedSicUpdates",
