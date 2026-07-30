@@ -78,6 +78,22 @@ def test_duplicate_ticker_blocks_publication(monkeypatch):
     assert any(item["code"] == "duplicate_ticker" for item in exc.value.report["deterministic_findings"])
 
 
+def test_inferred_naics_tier_blocks_publication(monkeypatch):
+    monkeypatch.setenv("DQ_AI_MODE", "off")
+    data = _csv().replace(
+        b"T0000,0000000001,7372,541511,exact_weighted",
+        b"T0000,0000000001,7372,541511,rollup_group",
+    )
+
+    with pytest.raises(UniverseQualityError) as exc:
+        evaluate_universe(data, None, None)
+
+    assert any(
+        item["code"] == "invalid_naics_tier"
+        for item in exc.value.report["deterministic_findings"]
+    )
+
+
 def test_publish_and_verified_read_detect_corruption(monkeypatch):
     monkeypatch.setenv("DQ_AI_MODE", "off")
     s3 = FakeS3()

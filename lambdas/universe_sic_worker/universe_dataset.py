@@ -21,6 +21,8 @@ _TICKER_RE = re.compile(r"^[A-Z0-9.\-]{1,15}$")
 _CIK_RE = re.compile(r"^\d{10}$")
 _SIC_RE = re.compile(r"^\d{4}$")
 _NAICS_RE = re.compile(r"^\d{6}$")
+_OBSERVED_NAICS_TIERS = {"exact_weighted", "exact_bridge"}
+_ALLOWED_NAICS_TIERS = _OBSERVED_NAICS_TIERS | {"unresolved"}
 
 
 class UniverseQualityError(RuntimeError):
@@ -130,6 +132,7 @@ def _findings(rows: list[dict], profile: dict, previous_profile: dict | None) ->
         findings.append({"severity": "error", "code": "duplicate_ticker",
                          "details": {"duplicates": profile["rows"] - profile["unique_tickers"]}})
     invalid = {"ticker": 0, "cik": 0, "sic": 0, "naics": 0}
+    invalid_tier = inconsistent_tier = 0
     for index, row in enumerate(rows):
         row_invalid = []
         ticker, cik, sic, naics = (
@@ -139,14 +142,37 @@ def _findings(rows: list[dict], profile: dict, previous_profile: dict | None) ->
         if not _CIK_RE.fullmatch(cik): row_invalid.append("cik")
         if not _SIC_RE.fullmatch(sic): row_invalid.append("sic")
         if naics and not _NAICS_RE.fullmatch(naics): row_invalid.append("naics")
+        tier = (row.get("naics_tier") or "").strip()
+        if tier not in _ALLOWED_NAICS_TIERS:
+            invalid_tier += 1
+            row_invalid.append("naics_tier")
+        if (tier in _OBSERVED_NAICS_TIERS) != bool(naics):
+            inconsistent_tier += 1
+            row_invalid.append("naics_tier_consistency")
         for column in row_invalid:
-            invalid[column] += 1
+            if column in invalid:
+                invalid[column] += 1
         if row_invalid and len(evidence) < 12:
             evidence.append(("invalid_" + "_".join(row_invalid), index, row))
     for column, count in invalid.items():
         if count:
             findings.append({"severity": "error", "code": f"invalid_{column}",
                              "details": {"rows": count}})
+    if invalid_tier:
+        findings.append({"severity": "error", "code": "invalid_naics_tier",
+                         "details": {"rows": invalid_tier}})
+    if inconsistent_tier:
+        findings.append({"severity": "error", "code": "inconsistent_naics_tier",
+                         "details": {"rows": inconsistent_tier}})
+    minimum_observed_coverage = float(
+        os.getenv("UNIVERSE_DQ_MIN_OBSERVED_NAICS_COVERAGE", "0.70")
+    )
+    if profile["naics_coverage"] < minimum_observed_coverage:
+        findings.append({
+            "severity": "error", "code": "observed_naics_coverage_too_low",
+            "details": {"coverage": profile["naics_coverage"],
+                        "minimum": minimum_observed_coverage},
+        })
     if previous_profile and previous_profile.get("rows"):
         drop = (previous_profile["rows"] - profile["rows"]) / previous_profile["rows"]
         if drop > float(os.getenv("UNIVERSE_DQ_MAX_ROW_DROP", "0.15")):
@@ -222,7 +248,9 @@ def _ai_review(profile: dict, previous_profile: dict | None, evidence: list[dict
     facts = {"profile": profile, "previous_profile": previous_profile, "row_evidence": evidence}
     prompt = ("Conservatively review a US-listed common-stock universe. Detect membership, "
               "identifier, SIC/NAICS mapping, coverage, or schema anomalies. Identifiers are "
-              "stable pseudonyms. Every anomaly must cite supplied evidence IDs; invent nothing.\n\n"
+              "stable pseudonyms. NAICS is published only for exact SIC4 matches in source "
+              "crosswalks; unresolved values must remain blank rather than be inferred from "
+              "broader SIC groups. Every anomaly must cite supplied evidence IDs; invent nothing.\n\n"
               + json.dumps(facts, sort_keys=True, separators=(",", ":")))
     body = _json_bytes({"model": model, "temperature": 0,
         "max_tokens": int(os.getenv("DQ_AI_MAX_TOKENS", "2000")),
