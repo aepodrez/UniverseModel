@@ -66,6 +66,19 @@ def test_pending_sic_updates_are_merged_in_key_order(monkeypatch):
     assert keys == [f"{prefix}/a.json", f"{prefix}/b.json"]
 
 
+def test_exchange_filter_rejects_blank_tickers_and_normalizes_identity():
+    rows = [
+        {"ticker": None, "cik": 1, "exchange": "Nasdaq"},
+        {"ticker": "  aaa ", "cik": 2, "exchange": "NYSE"},
+        {"ticker": "AAA", "cik": 3, "exchange": "Nasdaq"},
+        {"ticker": "OTC", "cik": 4, "exchange": "OTC"},
+    ]
+
+    assert downloader._filter_by_exchange(rows) == [{
+        "ticker": "AAA", "cik": "0000000002", "exchange": "NYSE",
+    }]
+
+
 def test_downloader_creates_run_scoped_work_and_propagates_run_id(monkeypatch):
     fake_s3 = FakeS3()
     fake_lambda = FakeLambda()
@@ -89,3 +102,23 @@ def test_downloader_creates_run_scoped_work_and_propagates_run_id(monkeypatch):
     assert manifest["existing_sic"]["0000000002"] == "2222"
     assert manifest["pending_sic_keys"] == ["pending/a.json"]
     assert json.loads(fake_lambda.calls[0]["Payload"])["run_id"] == "run-new"
+
+
+def test_downloader_enriches_each_cik_once_for_multiple_share_classes(monkeypatch):
+    fake_s3 = FakeS3()
+    monkeypatch.setattr(downloader, "s3", fake_s3)
+    monkeypatch.setattr(downloader, "lambda_", FakeLambda())
+    monkeypatch.setattr(downloader, "_fetch_all_tickers", lambda: [
+        {"cik": "0000000001", "ticker": "A", "name": "A", "exchange": "NYSE"},
+        {"cik": "0000000001", "ticker": "A-B", "name": "A", "exchange": "NYSE"},
+    ])
+    monkeypatch.setattr(downloader, "_load_existing_sic_cache",
+                        lambda: ({}, None, None))
+    monkeypatch.setattr(downloader, "_load_pending_sic_updates",
+                        lambda: ({}, []))
+
+    downloader.lambda_handler({"run_id": "share-classes"}, None)
+
+    manifest = json.loads(fake_s3.puts[0]["Body"])
+    assert len(manifest["all_tickers"]) == 2
+    assert manifest["chunk_0"] + manifest["chunk_1"] == ["0000000001"]

@@ -81,9 +81,20 @@ def _filter_by_exchange(tickers: list[dict]) -> list[dict]:
     seen: set[str] = set()
     out: list[dict] = []
     for t in tickers:
-        if t["exchange"] in US_EXCHANGES and t["ticker"] not in seen:
-            seen.add(t["ticker"])
-            out.append(t)
+        ticker = str(t.get("ticker") or "").upper().strip()
+        cik = str(t.get("cik") or "").strip().zfill(10)
+        if (
+            t.get("exchange") not in US_EXCHANGES
+            or not ticker
+            or not cik.isdigit()
+            or len(cik) != 10
+            or ticker in seen
+        ):
+            continue
+        normalized = dict(t)
+        normalized.update({"ticker": ticker, "cik": cik})
+        seen.add(ticker)
+        out.append(normalized)
     log.info("Tickers on major US exchanges: %d", len(out))
     return out
 
@@ -146,7 +157,9 @@ def lambda_handler(event, context):
     pending_sic, pending_sic_keys = _load_pending_sic_updates()
     existing_sic.update(pending_sic)
 
-    ciks = [t["cik"] for t in filtered]
+    # Multiple listed share classes legitimately share one CIK. Fetch the SEC
+    # company classification once, while retaining all ticker rows for output.
+    ciks = list(dict.fromkeys(t["cik"] for t in filtered))
     mid  = len(ciks) // 2
     chunk_0 = ciks[:mid]
     chunk_1 = ciks[mid:]
